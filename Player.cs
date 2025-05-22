@@ -1,345 +1,281 @@
-﻿using Microsoft.Xna.Framework.Graphics;
-using Microsoft.Xna.Framework.Input;
+﻿// Player.cs
 using Microsoft.Xna.Framework;
+using Microsoft.Xna.Framework.Graphics;
+using Microsoft.Xna.Framework.Input;
+using MiNET.Effects;
 using System;
 using System.Collections.Generic;
 using System.Linq;
-using System.Text;
-using System.Threading.Tasks;
+using TestsForGame.MonoGameMenu;
 
-namespace TestsForGame
+namespace MonoGameMenu
 {
-    using global::MonoGameMenu;
-    using Microsoft.Xna.Framework;
-    using Microsoft.Xna.Framework.Graphics;
-    using Microsoft.Xna.Framework.Input;
-
-    namespace MonoGameMenu
+    public abstract class Player
     {
-        public enum PlayerState
+        // Основные свойства
+        public bool IsAlive { get; protected set; } = true;
+        public int Health { get; protected set; }
+        public int MaxHealth { get; protected set; }
+        public int Damage { get; protected set; }
+        public float AttackRange { get; protected set; }
+        public float AttackCooldownTime { get; protected set; }
+        public float MoveSpeed { get; protected set; }
+        public Vector2 Position { get; set; }
+        public float Speed { get; }
+        public Rectangle MapBounds { get; set; } = new Rectangle(0, 0, 1650, 1200);
+        public PlayerType CharacterType { get; }
+
+        // Анимации
+        protected Dictionary<string, Animation> Animations;
+        protected Animation CurrentAnimation;
+        protected bool IsFacingRight = true;
+
+        // Состояния
+        private float _attackCooldown;
+        private float _invincibilityTimer;
+        private const float InvincibilityDuration = 1.0f;
+        private bool _isHit;
+
+        // Полоса здоровья
+        private Texture2D _healthBarBg, _healthBarFg;
+        private float _displayedHealth;
+        private const float HealthLerpSpeed = 0.1f;
+        private const int HealthBarWidth = 60, HealthBarHeight = 8, HealthBarOffsetY = -40;
+
+        // Добавляем параметры атаки
+        protected float _attackAnimationTime = 0.3f;
+        protected int _attackDamageFrame = 3; // На каком кадре наносится урон
+        protected bool _isAttacking = false;
+
+        private bool _attackKeyReleased = true;
+
+        // Обновленный метод получения хитбокса
+        protected bool _canDealDamage = false;
+        protected virtual Rectangle GetAttackHitbox()
         {
-            Idle,       // Стояние
-            Running,    // Бег
-            Attacking,  // Атака
-            Dead        // Смерть
+            int width = 60;
+            int height = 80;
+            int x = IsFacingRight ? (int)Position.X + 40 : (int)Position.X - width - 40;
+            int y = (int)Position.Y - height / 2;
+
+            return new Rectangle(x, y, width, height);
         }
 
-        public class Player
+        protected Player(PlayerType type, Dictionary<string, Animation> animations, Vector2 position, float speed)
         {
-            public bool IsAlive { get; private set; } = true;
-            public int Health { get; private set; } = 100;
-            public int MaxHealth { get; private set; } = 100;
+            CharacterType = type;
+            Animations = animations;
+            Position = position;
+            Speed = speed;
+            CurrentAnimation = animations["Idle"];
+        }
+        public void InitializeHealthBar(GraphicsDevice graphicsDevice)
+        {
+            _healthBarBg = new Texture2D(graphicsDevice, 1, 1);
+            _healthBarBg.SetData(new[] { Color.Black });
+            _healthBarFg = new Texture2D(graphicsDevice, 1, 1);
+            _healthBarFg.SetData(new[] { Color.Red });
+        }
 
+        public virtual void Update(GameTime gameTime)
+        {
+            float deltaTime = (float)gameTime.ElapsedGameTime.TotalSeconds;
 
-            public bool IsAttacking => _currentAnimation == _attackAnimation && !_currentAnimation.IsComplete;
+            // Обновление таймеров
+            if (_invincibilityTimer > 0) _invincibilityTimer -= deltaTime;
+            if (_attackCooldown > 0) _attackCooldown -= deltaTime;
 
-            private float _attackCooldown;
-            public Rectangle AttackHitbox
+            // Обработка анимации атаки
+            if (_isAttacking)
             {
-                get
+                CurrentAnimation.Update(gameTime);
+
+                // Проверяем нужный кадр для нанесения урона
+                _canDealDamage = CurrentAnimation.CurrentFrameIndex == _attackDamageFrame;
+
+                // Завершение атаки
+                if (CurrentAnimation.IsComplete)
                 {
-                    int x = _isFacingRight ?
-                        (int)Position.X + 30 :
-                        (int)Position.X - 70;
-                    return new Rectangle(x, (int)Position.Y - 30, 40, 60);
+                    _isAttacking = false;
+                    _canDealDamage = false;
+                    CurrentAnimation = Animations["Idle"];
                 }
             }
-            public Rectangle MapBounds { get; set; } = new Rectangle(0, 0, 1650, 1200); // Края для ограничения персонажа
-            public Vector2 Position { get; set; }
-            public float Speed { get; set; }
-            public PlayerState State { get; private set; }
-
-
-            public Rectangle Bounds { get; set; }
-
-
-            // Текстуры для полосы здоровья
-            private Texture2D _healthBarBg;
-            private Texture2D _healthBarFg;
-
-            private float _displayedHealth;
-            private const float HealthLerpSpeed = 0.1f;
-
-            // Размеры полосы здоровья
-            private const int HealthBarWidth = 60;
-            private const int HealthBarHeight = 8;
-            private const int HealthBarOffsetY = -40; // Смещение вверх от позиции игрока
-
-            private Animation _idleAnimation;
-            private Animation _runAnimation;
-            private Animation _attackAnimation;
-            private Animation _deathAnimation;
-            private Animation _currentAnimation;
-
-            private bool _isFacingRight = true;
-
-            private float _invincibilityTimer = 0f;
-            private const float INVINCIBILITY_DURATION = 1.0f; // 1 сек неуязвимости после удара
-            private float _hitEffectTimer = 0f;
-            private bool _isHit = false;
-
-
-            public Player(Vector2 position, float speed,
-                         Animation idleAnimation, Animation runAnimation,
-                         Animation attackAnimation, Animation deathAnimation)
+            else
             {
-                Position = position;
-                Speed = speed;
-                _idleAnimation = idleAnimation;
-                _runAnimation = runAnimation;
-                _attackAnimation = attackAnimation;
-                _deathAnimation = deathAnimation;
-
-                _currentAnimation = _idleAnimation;
-                State = PlayerState.Idle;
-
+                // Обновление других анимаций
+                CurrentAnimation.Update(gameTime);
             }
 
-            public void TakeDamage(int damage)
+            HandleInput(deltaTime);
+            _displayedHealth = MathHelper.Lerp(_displayedHealth, Health, HealthLerpSpeed);
+        }
+        protected virtual void HandleInput(float deltaTime)
+        {
+            var keyboardState = Keyboard.GetState();
+
+            // Обработка атаки
+            if (keyboardState.IsKeyDown(Keys.LeftControl))
             {
-                if (_invincibilityTimer > 0 || !IsAlive)
-                    return;
-
-                Health = Math.Max(0, Health - damage);
-                _invincibilityTimer = INVINCIBILITY_DURATION;
-                _isHit = true;
-                _hitEffectTimer = 0.2f; // Длительность эффекта мигания
-
-                if (Health <= 0)
+            if (_attackKeyReleased && !_isAttacking && _attackCooldown <= 0)
                 {
-                    Die();
+                    StartAttack();
+                   _attackKeyReleased = false;
                 }
             }
-
-
-            // Загрузка движения персонажа
-            public void Update(GameTime gameTime)
+            else
             {
-                float deltaTime = (float)gameTime.ElapsedGameTime.TotalSeconds;
-
-                // Обновляем таймер неуязвимости
-                if (_invincibilityTimer > 0)
-                {
-                    _invincibilityTimer -= deltaTime;
-                }
-
-                // Обновляем таймер эффекта удара
-                if (_hitEffectTimer > 0)
-                {
-                    _hitEffectTimer -= deltaTime;
-                }
-                else
-                {
-                    _isHit = false;
-                }
-
-                // Остальная логика обновления
-                switch (State)
-                {
-                    case PlayerState.Idle:
-                        HandleIdleState(deltaTime);
-                        break;
-                    case PlayerState.Running:
-                        HandleRunningState(deltaTime);
-                        break;
-                    case PlayerState.Attacking:
-                        HandleAttackingState(deltaTime);
-                        break;
-                    case PlayerState.Dead:
-                        break;
-                }
-
-                _displayedHealth = MathHelper.Lerp(_displayedHealth, Health, HealthLerpSpeed);
-
-                _currentAnimation.Update(gameTime);
-
-                if (Keyboard.GetState().IsKeyDown(Keys.Space) && !IsAttacking && _attackCooldown <= 0)
-                {
-                    _currentAnimation = _attackAnimation;
-                    _currentAnimation.Reset();
-                    _attackCooldown = 0.1f;
-                }
-
-                if (_attackCooldown > 0)
-                    _attackCooldown -= deltaTime;
+                _attackKeyReleased = true;
             }
 
-            private void HandleIdleState(float deltaTime)
+                // Блокируем движение во время атаки
+           if (_isAttacking) return;
+
+            Vector2 direction = Vector2.Zero;
+
+            if (keyboardState.IsKeyDown(Keys.W)) direction.Y -= 5;
+            if (keyboardState.IsKeyDown(Keys.S)) direction.Y += 5;
+            if (keyboardState.IsKeyDown(Keys.A)) { direction.X -= 5; IsFacingRight = false; }
+            if (keyboardState.IsKeyDown(Keys.D)) { direction.X += 5; IsFacingRight = true; }
+
+            if (direction != Vector2.Zero)
             {
-                var keyboardState = Keyboard.GetState();
-
-                if (keyboardState.IsKeyDown(Keys.A) || keyboardState.IsKeyDown(Keys.D) ||
-                    keyboardState.IsKeyDown(Keys.W) || keyboardState.IsKeyDown(Keys.S))
-                {
-                    ChangeState(PlayerState.Running);
-                    return;
-                }
-
-                if (keyboardState.IsKeyDown(Keys.Space) && _attackCooldown <= 0)
-                {
-                    ChangeState(PlayerState.Attacking);
-                    return;
-                }
-
-
+                direction.Normalize();
+                Position += direction * MoveSpeed * deltaTime;
+                ClampPosition();
+                CurrentAnimation = Animations["Run"];
             }
-
-            private void HandleRunningState(float deltaTime)
+            else
             {
-                var keyboardState = Keyboard.GetState();
-                bool isMoving = false;
-                Vector2 direction = Vector2.Zero;
-
-                if (keyboardState.IsKeyDown(Keys.W)) { direction.Y -= 1; isMoving = true; }
-                if (keyboardState.IsKeyDown(Keys.S)) { direction.Y += 1; isMoving = true; }
-                if (keyboardState.IsKeyDown(Keys.A)) { direction.X -= 1; _isFacingRight = false; isMoving = true; }
-                if (keyboardState.IsKeyDown(Keys.D)) { direction.X += 1; _isFacingRight = true; isMoving = true; }
-
-                if (direction != Vector2.Zero)
-                    direction.Normalize();
-
-                Position += direction * Speed * deltaTime;
-
-                if (keyboardState.IsKeyDown(Keys.Space) && _attackCooldown <= 0)
-                {
-                    ChangeState(PlayerState.Attacking);
-                    return;
-                }
-
-                if (!isMoving)
-                {
-                    ChangeState(PlayerState.Idle);
-                }
-
-                // Применяем движение с учетом границ
-                Vector2 newPosition = Position + direction * Speed * deltaTime;
-
-                // Ограничиваем позицию по X
-                newPosition.X = Math.Clamp(
-                    newPosition.X,
-                    MapBounds.X + _currentAnimation.FrameWidth / 2,
-                    MapBounds.X + MapBounds.Width - _currentAnimation.FrameWidth / 2);
-
-                // Ограничиваем позицию по Y
-                newPosition.Y = Math.Clamp(
-                    newPosition.Y,
-                    MapBounds.Y + _currentAnimation.FrameHeight / 2,
-                    MapBounds.Y + MapBounds.Height - _currentAnimation.FrameHeight / 2);
-
-                Position = newPosition;
+                CurrentAnimation = Animations["Idle"];
             }
+        }
 
-            private void HandleAttackingState(float deltaTime)
+        protected void StartAttack()
+        {
+            // Проверяем, что анимация атаки существует
+            if (Animations.ContainsKey("Attack"))
             {
-                if (_currentAnimation.IsComplete)
+                _isAttacking = true;
+                CurrentAnimation = Animations["Attack"];
+                CurrentAnimation.Reset();
+                _attackCooldown = AttackCooldownTime;
+                _canDealDamage = false;
+            }
+        }
+
+
+        public void TakeDamage(int damage)
+        {
+            if (_invincibilityTimer > 0 || !IsAlive) return;
+
+            Health = Math.Max(0, Health - damage);
+            _invincibilityTimer = InvincibilityDuration;
+            _isHit = true;
+
+            if (Health <= 0) Die();
+        }
+
+        protected virtual void Die()
+        {
+            IsAlive = false;
+            CurrentAnimation = Animations["Death"];
+            CurrentAnimation.Reset();
+        }
+
+        public void CheckAttack(List<Opponent> opponents)
+        {
+            if (!_canDealDamage) return;
+
+            var hitbox = GetAttackHitbox();
+            foreach (var enemy in opponents.Where(e => e.IsAlive))
+            {
+                if (hitbox.Intersects(enemy.Bounds))
                 {
-                    ChangeState(PlayerState.Idle);
-                    _attackCooldown = 0.1f;
+                    enemy.TakeDamage(Damage);
+                    _canDealDamage = false; // Урон наносится только один раз за атаку
                 }
             }
 
-            private void Die()
+        }
+
+        private void ClampPosition()
+        {
+            Position = new Vector2(
+                MathHelper.Clamp(Position.X, MapBounds.Left, MapBounds.Right),
+                MathHelper.Clamp(Position.Y, MapBounds.Top, MapBounds.Bottom)
+            );
+        }
+
+        public void Draw(SpriteBatch spriteBatch)
+        {
+            var flip = IsFacingRight ? SpriteEffects.None : SpriteEffects.FlipHorizontally;
+            var color = _isHit ? Color.Red : Color.White;
+
+            spriteBatch.Draw(
+                CurrentAnimation.Texture,
+                Position,
+                CurrentAnimation.CurrentFrame,
+                color,
+                0f,
+                new Vector2(CurrentAnimation.FrameWidth / 2, CurrentAnimation.FrameHeight / 2),
+                1f,
+                flip,
+                0f);
+        }
+
+        public void DrawHealthBar(SpriteBatch spriteBatch)
+        {
+            if (!IsAlive) return;
+
+            Vector2 pos = new Vector2(Position.X - HealthBarWidth / 2, Position.Y + HealthBarOffsetY);
+            spriteBatch.Draw(_healthBarBg, new Rectangle((int)pos.X, (int)pos.Y, HealthBarWidth, HealthBarHeight), Color.Black);
+
+            int healthWidth = (int)(HealthBarWidth * (_displayedHealth / MaxHealth));
+            spriteBatch.Draw(_healthBarFg, new Rectangle((int)pos.X, (int)pos.Y, healthWidth, HealthBarHeight - 2), Color.Red);
+        }
+        public void DrawAttackRange(SpriteBatch spriteBatch)
+        {
+            if (CurrentAnimation == Animations["Attack"])
             {
-                if (State != PlayerState.Dead)
-                {
-                    ChangeState(PlayerState.Dead);
-                    IsAlive = false;
-                }
+                var hitbox = GetAttackHitbox();
+                var texture = new Texture2D(spriteBatch.GraphicsDevice, 1, 1);
+                texture.SetData(new[] { Color.Red * 0.3f });
+
+                spriteBatch.Draw(texture, hitbox, Color.Red * 0.3f);
             }
+        }
+    }
 
-            private void ChangeState(PlayerState newState)
-            {
-                if (State == newState) return;
+    public class Warrior : Player
+    {
+        public Warrior(Dictionary<string, Animation> animations, Vector2 position)
+            : base(PlayerType.Warrior, animations, position, 200f)
+        {
+            Health = MaxHealth = 150;
+            Damage = 30;
+            AttackRange = 80f;
+            AttackCooldownTime = 1.2f;
+            MoveSpeed = 200f;
+            _attackAnimationTime = 0.25f; // Более медленная анимация атаки
+            _attackDamageFrame = 4; // Удар на 4 кадре
+        }
+    }
 
-                State = newState;
 
-                switch (newState)
-                {
-                    case PlayerState.Idle:
-                        _currentAnimation = _idleAnimation;
-                        break;
-                    case PlayerState.Running:
-                        _currentAnimation = _runAnimation;
-                        break;
-                    case PlayerState.Attacking:
-                        _currentAnimation = _attackAnimation;
-                        break;
-                    case PlayerState.Dead:
-                        _currentAnimation = _deathAnimation;
-                        break;
-                }
+    public class Archer : Player
+    {
+        public Archer(Dictionary<string, Animation> animations, Vector2 position)
+            : base(PlayerType.Archer, animations, position, 250f)
+        {
+            Health = MaxHealth = 100;
+            Damage = 20;
+            AttackRange = 120f; // Большая дальность, но без снарядов
+            AttackCooldownTime = 0.8f;
+            MoveSpeed = 250f;
+            _attackAnimationTime = 0.25f; // Более быстрая анимация атаки
+            _attackDamageFrame = 2; // Удар на 2 кадре
 
-                _currentAnimation.Reset();
-            }
-
-            public void CheckAttack(List<Opponent> opponents)
-            {
-                if (!IsAttacking) return;
-
-                // Наносим урон на определенном кадре анимации
-                if (_currentAnimation.CurrentFrameIndex == 3)
-                {
-                    foreach (var enemy in opponents.Where(e => e.IsAlive))
-                    {
-                        if (AttackHitbox.Intersects(enemy.Bounds))
-                        {
-                            enemy.TakeDamage(20);
-                        }
-                    }
-                }
-            }
-
-            public void InitializeHealthBar(GraphicsDevice graphicsDevice)
-            {
-                // Создаем текстуры для полосы здоровья
-                _healthBarBg = new Texture2D(graphicsDevice, 1, 1);
-                _healthBarBg.SetData(new[] { Color.Black });
-
-                _healthBarFg = new Texture2D(graphicsDevice, 1, 1);
-                _healthBarFg.SetData(new[] { Color.Red });
-            }
-            public void DrawHealthBar(SpriteBatch spriteBatch)
-            {
-                if (!IsAlive) return;
-
-                // Позиция полосы здоровья (над головой игрока)
-                Vector2 healthBarPos = new Vector2(
-                    Position.X - HealthBarWidth / 2,
-                    Position.Y + HealthBarOffsetY
-                );
-
-                // Фон полосы здоровья (полная длина)
-                spriteBatch.Draw(
-                    _healthBarBg,
-                    new Rectangle((int)healthBarPos.X, (int)healthBarPos.Y,
-                                 HealthBarWidth, HealthBarHeight),
-                    Color.Black);
-
-                // Текущее здоровье (рассчитываем ширину)
-                int currentHealthWidth = (int)(HealthBarWidth * ((float)_displayedHealth / MaxHealth));
-                spriteBatch.Draw(
-                    _healthBarFg,
-                    new Rectangle((int)healthBarPos.X, (int)healthBarPos.Y,
-                                 currentHealthWidth, HealthBarHeight - 2),
-                    Color.Red);
-            }
-
-            public void Draw(SpriteBatch spriteBatch)
-            {
-                SpriteEffects flip = _isFacingRight ? SpriteEffects.None : SpriteEffects.FlipHorizontally;
-                Color drawColor = _isHit ? Color.Red : Color.White; // Мигание красным при ударе
-
-                spriteBatch.Draw(
-                    _currentAnimation.Texture,
-                    Position,
-                    _currentAnimation.CurrentFrame,
-                    drawColor,
-                    0f,
-                    new Vector2(_currentAnimation.FrameWidth / 2, _currentAnimation.FrameHeight / 2),
-                    1f,
-                    flip,
-                    0f);
-            }
         }
     }
 }

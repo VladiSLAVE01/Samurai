@@ -21,8 +21,8 @@ namespace TestsForGame
 
             public int CurrentFrameIndex { get; private set; }
             public Rectangle CurrentFrame => Frames[CurrentFrameIndex];
-            public int FrameWidth { get; }  // Теперь это свойство с явным заданием ширины
-            public int FrameHeight { get; } // И высоты кадра
+            public int FrameWidth { get; }  //свойство с явным заданием ширины
+            public int FrameHeight { get; } // высота кадра
             public int FrameCount { get; internal set; }
 
             private float _timer;
@@ -32,7 +32,7 @@ namespace TestsForGame
                            int frameWidth, int frameHeight,
                            int frameCount,
                            float frameTime,
-                           bool isLooping,
+                           bool isLooping = false,
                            int startX = 0,
                            int startY = 0,
                            int paddingX = 0,
@@ -68,7 +68,7 @@ namespace TestsForGame
                 }
             }
 
-            // Старый конструктор для обратной совместимости
+            
             public Animation(Texture2D texture, int frameCount, float frameTime, bool isLooping)
                 : this(texture,
                       texture.Width / frameCount, // Автоматический расчет ширины
@@ -112,6 +112,7 @@ namespace TestsForGame
                 IsComplete = false;
             }
         }
+
     }
 }
 //    public class Animation

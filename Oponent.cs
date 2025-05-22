@@ -3,12 +3,16 @@ using Microsoft.Xna.Framework.Content;
 using Microsoft.Xna.Framework.Graphics;
 using MiNET.Effects;
 using System;
+using System.Collections.Generic;
+using System.Diagnostics;
 using TestsForGame.MonoGameMenu;
 
 namespace MonoGameMenu
 {
     public class Opponent
     {
+        // Добавляем специальные свойства для боссов
+        public bool IsBoss => Type == EnemyType.Boss || Type == EnemyType.Boss2;
         public bool IsDeathAnimationComplete  { get; private set; } = false;
         public bool IsAttacing => _currentState == AIState.Attack;
         public Rectangle AttackHitbox => CalculateAttackHitbox();
@@ -19,14 +23,11 @@ namespace MonoGameMenu
 
         public int MaxHealth { get; private set; } = 100;
         public int Health { get; private set; } = 100;
-        public bool IsAlive => Health > 0;
 
-        // Индикатор здоровья
-        private Texture2D _healthBarBg;
-        private Texture2D _healthBarFg;
+        public int BossHealth { get; set; } = 300;
+        public int BossDamage { get; set; } = 50;
+        public bool IsAlive { get; private set; } = true;
 
-        private float _displayedHealth;
-        private const float HealthLerpSpeed = 0.1f;
 
         // Анимации
 
@@ -45,14 +46,41 @@ namespace MonoGameMenu
         private float _attackFrameTimer = 0f;
         private int _currentAttackFrame = 0;
 
+        // Полоса здоровья
+        private Texture2D _healthBarBg, _healthBarFg;
+        private float _displayedHealth;
+        private const float HealthLerpSpeed = 0.1f;
+        private const int HealthBarWidth = 60, HealthBarHeight = 8, HealthBarOffsetY = -40;
+
         // Параметры существа
+        public int Damage { get; private set; }
+
         public Vector2 Position { get; private set; }
-        public bool IsActive { get; private set; } = true;
+        public bool IsActive { get;private set; } = true;
         public float MoveSpeed { get; set; } = 150f;
         public float DetectionRadius { get; set; } = 600f;
         public float AttackRange { get; set; } = 50f;
 
+
+        private record EnemyStats(int Health, int Damage, float MoveSpeed,
+                                float DetectionRadius, float AttackRange);
+        // Характеристики врагов
+        private static readonly Dictionary<EnemyType, EnemyStats> _enemyStats = new()
+        {
+            { EnemyType.Bandit, new EnemyStats(80, 15, 120f, 600f, 50f) },
+            { EnemyType.Ninja, new EnemyStats(60, 20, 180f, 700f, 60f) },
+            { EnemyType.Boss, new EnemyStats(200, 30, 100f, 800f, 80f) }
+        };
         // Состояния ИИ
+        public enum EnemyType
+        {
+            Bandit,    // Для воина
+            Ninja,     // Для лучника
+            Boss,    // Общий сильный враг
+            Boss2
+        }
+
+        public EnemyType Type { get; }
         private enum AIState
         {
             Idle,
@@ -61,6 +89,8 @@ namespace MonoGameMenu
             Dead
         }
         private AIState _currentState = AIState.Idle;
+        private EnemyType enemyType;
+        public Dictionary<EnemyType, Animation> _enemyAnimations;
 
         // Основные параметры
         public Rectangle Bounds => new Rectangle(
@@ -83,34 +113,146 @@ namespace MonoGameMenu
 
         // Ссылка на игрока
         private readonly Player _player;
+        public event Action<Opponent> OnDeath;
+
+        public Opponent(EnemyType type, Vector2 position, Player player,
+                       Dictionary<string, Animation >animations)
+        {
+            Type = type;
+            Position = position;
+            _player = player;
+
+            // Установка характеристик
+            var stats = _enemyStats[type];
+            MaxHealth = Health = stats.Health;
+            Damage = stats.Damage;
+            MoveSpeed = stats.MoveSpeed;
+            DetectionRadius = stats.DetectionRadius;
+            AttackRange = stats.AttackRange;
+
+            // Загрузка анимаций
+            _idleAnimation = animations["Idle"];
+            _runAnimation = animations["Run"];
+            _attackAnimation = animations["Attack"];
+            _deathAnimation = animations["Death"];
+            _currentAnimation = _idleAnimation;
+            if (type == EnemyType.Boss || type == EnemyType.Boss2)
+            {
+                Health = BossHealth;
+                Damage = BossDamage;
+            }
+        }
 
         public Opponent(Vector2 position, Player player,
                        Animation idle, Animation run,
                        Animation attack, Animation death)
+            : this(EnemyType.Bandit, position, player,
+                  new Dictionary<string, Animation>
+                  {
+                      ["Idle"] = idle,
+                      ["Run"] = run,
+                      ["Attack"] = attack,
+                      ["Death"] = death
+                  })
         {
+        }
+
+        public Opponent(EnemyType type, Vector2 position, Player player, EnemyType enemyType, Dictionary<EnemyType, Animation> enemyAnimations)
+        {
+            Type = type;
             Position = position;
-            _player = player ?? throw new ArgumentNullException(nameof(player));
+            _player = player;
+            this.enemyType = enemyType;
+            _enemyAnimations = enemyAnimations;
+            if (IsBoss)
+        {
+            // Уникальные параметры для боссов
+            Health = 500;
+            Damage = 40;
+            MoveSpeed = 80f;
+            DetectionRadius = 1000f;
+            AttackRange = 120f;
+        }
+        }
 
-            _idleAnimation = idle ?? throw new ArgumentNullException(nameof(idle));
-            _runAnimation = run ?? throw new ArgumentNullException(nameof(run));
-            _attackAnimation = attack ?? throw new ArgumentNullException(nameof(attack));
-            _deathAnimation = death ?? throw new ArgumentNullException(nameof(death));
+        public static class EnemyAnimationFactory
+        {
+            public static Dictionary<string, Animation> CreateBanditAnimations(ContentManager content)
+            {
+                return new Dictionary<string, Animation>
+                {
+                    ["Idle"] = new Animation(content.Load<Texture2D>("IDLE_EB"), 5, 0.15f, true),
+                    ["Run"] = new Animation(content.Load<Texture2D>("RUN_EB"), 8, 0.1f, true),
+                    ["Attack"] = new Animation(content.Load<Texture2D>("ATTACK 2_EB"), 5, 0.12f, false),
+                    ["Death"] = new Animation(content.Load<Texture2D>("DEATH_EB"), 9, 0.2f, false)
+                };
+            }
 
-            _currentAnimation = _idleAnimation;
+            public static Dictionary<string, Animation> CreateNinjaAnimations(ContentManager content)
+            {
+                return new Dictionary<string, Animation>
+                {
+                    ["Idle"] = new Animation(content.Load<Texture2D>("IDLE_E"), 14, 0.15f, true),
+                    ["Run"] = new Animation(content.Load<Texture2D>("RUN_E"), 8, 0.08f, true),
+                    ["Attack"] = new Animation(content.Load<Texture2D>("ATTACK 2_E"), 5, 0.12f, false),
+                    ["Death"] = new Animation(content.Load<Texture2D>("DEATH_E"), 10, 0.18f, false)
+                };
+            }
+
+            //public static Dictionary<string, Animation> CreateNinjaWomenAnimations(ContentManager content)
+            //{
+            //    return new Dictionary<string, Animation>
+            //    {
+            //        ["Idle"] = new Animation(content.Load<Texture2D>("Textures/Enemies/Ninja/ninja_idle"), 10, 0.15f, true),
+            //        ["Run"] = new Animation(content.Load<Texture2D>("Textures/Enemies/Ninja/ninja_run"), 10, 0.08f, true),
+            //        ["Attack"] = new Animation(content.Load<Texture2D>("Textures/Enemies/Ninja/ninja_attack"), 8, 0.12f, false),
+            //        ["Hurt"] = new Animation(content.Load<Texture2D>("Textures/Enemies/Ninja/ninja_hurt"), 5, 0.18f, false)
+            //    };
+            //}
+
+            //public static Dictionary<string, Animation> CreateNinjaWomen2Animations(ContentManager content)
+            //{
+            //    return new Dictionary<string, Animation>
+            //    {
+            //        ["Idle"] = new Animation(content.Load<Texture2D>("Textures/Enemies/Ninja/ninja_idle"), 10, 0.15f, true),
+            //        ["Run"] = new Animation(content.Load<Texture2D>("Textures/Enemies/Ninja/ninja_run"), 10, 0.08f, true),
+            //        ["Attack"] = new Animation(content.Load<Texture2D>("Textures/Enemies/Ninja/ninja_attack"), 8, 0.12f, false),
+            //        ["Hurt"] = new Animation(content.Load<Texture2D>("Textures/Enemies/Ninja/ninja_hurt"), 5, 0.18f, false)
+            //    };
+            //}
+
+            public static Dictionary<string, Animation> CreateBossAnimations(ContentManager content)
+            {
+                return new Dictionary<string, Animation>
+                {
+                    ["Idle"] = new Animation(content.Load<Texture2D>("IDLE new 2"), 10, 0.1f, true),
+                    ["Run"] = new Animation(content.Load<Texture2D>("RUN new"), 16, 0.05f, true),
+                    ["Attack"] = new Animation(content.Load<Texture2D>("ATTACK 1 new"), 7, 0.15f, false),
+                    ["Hurt"] = new Animation(content.Load<Texture2D>("DEATH"), 10, 0.2f, false)
+                };
+            }
+            public static Dictionary<string, Animation> CreateBoss2Animations(ContentManager content)
+            {
+                return new Dictionary<string, Animation>
+                {
+                    ["Idle"] = new Animation(content.Load<Texture2D>("IDLE_С"), 5, 0.1f, true),
+                    ["Run"] = new Animation(content.Load<Texture2D>("RUN_С"), 7, 0.05f, true),
+                    ["Attack"] = new Animation(content.Load<Texture2D>("ATTACK1_С"), 5, 0.2f, false),
+                    ["Hurt"] = new Animation(content.Load<Texture2D>("DEATH_С"), 10, 0.2f, false)
+                };
+            }
 
         }
 
-        
-        public void Initialize(GraphicsDevice graphicsDevice)
+        public void InitializeHealthBar(GraphicsDevice graphicsDevice)
         {
-            Health = MaxHealth;
-
-            // Создаем текстуры для полосы здоровья
             _healthBarBg = new Texture2D(graphicsDevice, 1, 1);
             _healthBarBg.SetData(new[] { Color.Black });
             _healthBarFg = new Texture2D(graphicsDevice, 1, 1);
             _healthBarFg.SetData(new[] { Color.Red });
         }
+
+
 
         public void TakeDamage(int damage)
         {
@@ -123,48 +265,24 @@ namespace MonoGameMenu
             if (Health <= 0) { Die(); }
 
         }
-        private void Die()
+        public void Die()
         {
             _currentState = AIState.Dead;
             SetAnimation(_deathAnimation);
+            OnDeath?.Invoke(this); // Вызываем событие при смерти
         }
 
-        private void DrawHealthBar(SpriteBatch spriteBatch)
+        public void DrawHealthBar(SpriteBatch spriteBatch)
         {
             if (!IsAlive) return;
 
-            int healthWidth = (int)(60 * ((float)_displayedHealth / MaxHealth));
-            Vector2 healthBarPos = new Vector2(Position.X - 30, Position.Y - 40);
+            Vector2 pos = new Vector2(Position.X - HealthBarWidth / 2, Position.Y + HealthBarOffsetY);
+            spriteBatch.Draw(_healthBarBg, new Rectangle((int)pos.X, (int)pos.Y, HealthBarWidth, HealthBarHeight), Color.Black);
 
-            spriteBatch.Draw(_healthBarBg,
-                new Rectangle((int)healthBarPos.X, (int)healthBarPos.Y, 60, 8),
-                Color.Black);
-
-            spriteBatch.Draw(_healthBarFg,
-                new Rectangle((int)healthBarPos.X, (int)healthBarPos.Y, healthWidth, 6),
-                Color.Red);
+            int healthWidth = (int)(HealthBarWidth * (_displayedHealth / MaxHealth));
+            spriteBatch.Draw(_healthBarFg, new Rectangle((int)pos.X, (int)pos.Y, healthWidth, HealthBarHeight - 2), Color.Red);
         }
 
-        //public void DrawHealthBar(SpriteBatch spriteBatch)
-        //{
-        //    if (!IsAlive) return;
-
-        //    // Позиция полосы здоровья над головой
-        //    Vector2 healthBarPos = new Vector2(
-        //        Position.X - 30,
-        //        Position.Y - 40);
-
-        //    // Фон полосы здоровья
-        //    spriteBatch.Draw(_healthBarBg,
-        //        new Rectangle((int)healthBarPos.X, (int)healthBarPos.Y, 60, 8),
-        //        Color.Black);
-
-        //    // Текущее здоровье
-        //    int healthWidth = (int)(60 * ((float)Health / MaxHealth));
-        //    spriteBatch.Draw(_healthBarFg,
-        //        new Rectangle((int)healthBarPos.X, (int)healthBarPos.Y, healthWidth, 6),
-        //        Color.Red);
-        //}
 
         public void Update(GameTime gameTime)
         {
@@ -208,6 +326,7 @@ namespace MonoGameMenu
         }
         private void UpdateAI(float deltaTime)
         {
+            if (!IsAlive) return;
             float distanceToPlayer = Vector2.Distance(Position, _player.Position);
 
             switch (_currentState)
@@ -223,7 +342,24 @@ namespace MonoGameMenu
                     break;
             }
         }
+        //private void UpdateAI(float deltaTime)
+        //{
+        //    if (!IsAlive) return;
+        //    float distanceToPlayer = Vector2.Distance(Position, _player.Position);
 
+        //    switch (_currentState)
+        //    {
+        //        case AIState.Idle:
+        //            UpdateIdleState(distanceToPlayer);
+        //            break;
+        //        case AIState.Chase:
+        //            UpdateChaseState(distanceToPlayer, deltaTime);
+        //            break;
+        //        case AIState.Attack:
+        //            UpdateAttackState(distanceToPlayer, deltaTime);
+        //            break;
+        //    }
+        //}
         private void UpdateIdleState(float distanceToPlayer)
         {
             SetAnimation(_idleAnimation);
@@ -231,9 +367,6 @@ namespace MonoGameMenu
             if (distanceToPlayer < DetectionRadius)
                 _currentState = AIState.Chase;
         }
-
-
-
         private void UpdateChaseState(float distanceToPlayer, float deltaTime)
         {
             SetAnimation(_runAnimation);
@@ -262,23 +395,40 @@ namespace MonoGameMenu
         }
         private void UpdateAttackState(float distanceToPlayer, float deltaTime)
         {
-            if (_attackFrameTimer <= 0)
+
+            if (_attackCooldown <= 0 && _player.IsAlive)
             {
-                _currentAttackFrame++;
-                _attackFrameTimer = AttackFrameDelay;
-
-
-                if (_currentAttackFrame >= _attackAnimation.FrameCount / 5)
+                if (Vector2.Distance(Position, _player.Position) < AttackRange * 1.5f)
                 {
-                    Attack();
+                    _player.TakeDamage(Damage); // Используем Damage из характеристик
+
+                    // Особые эффекты для разных типов
+                    switch (Type)
+                    {
+                        case EnemyType.Ninja:
+                            // Ниндзя наносит дополнительный урон при низком здоровье
+                            if (Health < MaxHealth * 0.3f)
+                                _player.TakeDamage(5);
+                            break;
+                        case EnemyType.Bandit:
+                            // Ниндзя наносит дополнительный урон при низком здоровье
+                            if (Health < MaxHealth * 0.3f)
+                                _player.TakeDamage(5);
+                            break;
+                            //case EnemyType.Boss:
+                            //    // Босс отбрасывает игрока
+                            //    var knockback = Vector2.Normalize(_player.Position - Position) * 150f;
+                            //    _player.ApplyKnockback(knockback);
+                            //    break;
+                    }
+
+                    _attackCooldown = AttackCooldownTime;
+
                 }
-
-                if (_currentAttackFrame >= _attackAnimation.FrameCount)
+                if (_currentAnimation.IsComplete)
                 {
-                    if (distanceToPlayer > AttackRange * 1.2f)
-                        _currentState = AIState.Chase;
-                    else
-                        _currentAttackFrame = 0;
+                    _currentState = AIState.Chase;
+
                 }
             }
         }
@@ -324,29 +474,35 @@ namespace MonoGameMenu
         //    }
         //}
 
+        // Визуализация в зависимости от типа
         public void Draw(SpriteBatch spriteBatch)
         {
             SpriteEffects flip = _isFacingRight ? SpriteEffects.None : SpriteEffects.FlipHorizontally;
 
-            float deathAlpha = IsDeathAnimationComplete ? 0.7f : 1f;
-            Color drawColor = _isHit ? Color.Red :
-                            (!IsAlive ? new Color(150, 150, 150, (int)(255 * deathAlpha)) : Color.White);
+            // Разные цвета для разных типов врагов
+            Color baseColor = Type switch
+            {
+                EnemyType.Bandit => Color.White,
+                EnemyType.Ninja => Color.White,
+                //EnemyType.Boss => Color.Red,
+                _ => Color.White
+            };
+
+            Color drawColor = _isHit ? Color.White :
+                (!IsAlive ? new Color(150, 150, 150, 200) : baseColor);
 
             spriteBatch.Draw(
                 _currentAnimation.Texture,
                 Position,
                 _currentAnimation.CurrentFrame,
-                Color.White,
+                drawColor,
                 0f,
                 new Vector2(_currentAnimation.FrameWidth / 2, _currentAnimation.FrameHeight / 2),
                 1f,
                 flip,
                 0f);
 
-            if (!_deathAnimationComplete)
-            {
-                DrawHealthBar(spriteBatch);
-            }
+            DrawHealthBar(spriteBatch);
         }
 
     }

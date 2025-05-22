@@ -19,6 +19,7 @@ public class Button
     }
 
     public Action OnClick { get; set; }
+    public Texture2D HighlightTexture { get; internal set; }
 
     public Button(Texture2D texture, SpriteFont font, string text)
     {
@@ -41,7 +42,9 @@ public class Button
     public void Draw(SpriteBatch spriteBatch)
     {
         Color buttonColor = _isHovered ? Color.LightGray : Color.Gray;
-        spriteBatch.Draw(_texture, _bounds, buttonColor);
+        spriteBatch.Draw(HighlightTexture ?? CreateSolidTexture(spriteBatch.GraphicsDevice, buttonColor),
+                        _bounds,
+                        buttonColor);
 
         Vector2 textSize = _font.MeasureString(_text);
         Vector2 textPosition = new Vector2(
@@ -50,5 +53,12 @@ public class Button
         );
 
         spriteBatch.DrawString(_font, _text, textPosition, Color.Black);
+    }
+
+    private Texture2D CreateSolidTexture(GraphicsDevice graphicsDevice, Color color)
+    {
+        Texture2D texture = new Texture2D(graphicsDevice, 1, 1);
+        texture.SetData(new[] { color });
+        return texture;
     }
 }
